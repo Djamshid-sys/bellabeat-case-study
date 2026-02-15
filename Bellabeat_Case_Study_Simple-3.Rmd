@@ -1,0 +1,687 @@
+---
+title: 'Bellabeat Case Study: Анализ данных умных устройств'
+author: "Djamshid Ashrapov"
+date: "10.02.2026"
+output:
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Введение
+
+## 1.1 О компании Bellabeat
+
+Bellabeat - это высокотехнологичная компания, производящая продукты для отслеживания здоровья, ориентированные на женщин. Основанная в 2013 году, Bellabeat быстро выросла и стала технологической компанией, специализирующейся на здоровье и благополучии женщин.
+
+**Продукты Bellabeat:**
+
+- **Leaf**: классический трекер активности (можно носить как браслет, ожерелье или клипсу)
+- **Time**: умные часы с функциями отслеживания здоровья
+- **Spring**: умная бутылка для воды, отслеживающая потребление жидкости
+- **Bellabeat app**: приложение, которое собирает данные со всех устройств
+
+## 1.2 Бизнес-задача
+
+**Цель анализа**: Проанализировать данные об использовании умных устройств, чтобы получить представление о том, как потребители используют устройства, не относящиеся к Bellabeat. Затем применить эти инсайты к одному продукту Bellabeat для формирования маркетинговой стратегии.
+
+**Ключевые вопросы для исследования:**
+
+1. Каковы основные тренды использования умных устройств?
+2. Как эти тренды применимы к клиентам Bellabeat?
+3. Как эти тренды могут повлиять на маркетинговую стратегию?
+
+**Заинтересованные стороны (Stakeholders):**
+
+- Urška Sršen - соучредитель и Chief Creative Officer Bellabeat
+- Sando Mur - соучредитель и ключевой член исполнительной команды
+- Команда маркетинга Bellabeat
+
+---
+
+# 2. Подготовка данных (Prepare)
+
+## 2.1 Описание датасета
+
+Для анализа используется публичный датасет: **FitBit Fitness Tracker Data**
+
+- **Источник**: [Kaggle](https://www.kaggle.com/arashnic/fitbit)
+- **Лицензия**: CC0: Public Domain (можно свободно использовать)
+- **Период**: с 12.04.2016 по 12.05.2016 (1 месяц)
+- **Участники**: 30 пользователей FitBit
+- **Тип данных**: Ежедневная активность, сон, шаги по часам
+
+**Ограничения датасета:**
+
+- Небольшая выборка (30 человек)
+- Данные за 2016 год (могут быть устаревшими)
+- Нет демографической информации (возраст, пол, местоположение)
+
+## 2.2 Загрузка необходимых библиотек
+
+```{r libraries}
+
+library(tidyverse)
+library(lubridate)
+
+```
+
+
+## 2.3 Загрузка данных
+
+```{r load-data}
+
+daily_activity <- read_csv("dailyActivity_merged.csv")
+sleep_day <- read_csv("sleepDay_merged.csv")  
+hourly_steps <- read_csv("hourlySteps_merged.csv")
+
+```
+
+---
+
+# 3. Обработка данных (Process)
+
+## 3.1 Просмотр структуры данных
+
+```{r explore-structure}
+
+glimpse(daily_activity)
+glimpse(sleep_day)
+glimpse(hourly_steps)
+
+```
+
+
+## 3.2 Проверка на пропущенные значения
+
+```{r check-missing}
+
+colSums(is.na(daily_activity))
+colSums(is.na(sleep_day))
+colSums(is.na(hourly_steps))
+
+```
+
+
+## 3.3 Очистка и трансформация данных
+
+```{r clean-data}
+
+daily_activity_clean <- daily_activity %>%
+  mutate(ActivityDate = as.Date(ActivityDate), Weekday = weekdays(ActivityDate), 
+    TotalActiveMinutes = VeryActiveMinutes + FairlyActiveMinutes + LightlyActiveMinutes) %>%
+  filter(TotalSteps > 0)
+
+
+cat("Daily Activity после очистки:", nrow(daily_activity_clean), "записей\n")
+
+
+sleep_day_clean <- sleep_day %>%
+  mutate(SleepDay = as.Date(SleepDay), HoursAsleep = TotalMinutesAsleep / 60,
+    HoursInBed = TotalTimeInBed / 60, 
+    TimeToFallAsleep = TotalTimeInBed - TotalMinutesAsleep
+  ) %>%
+  filter(TotalMinutesAsleep > 0)
+
+cat("Sleep Day после очистки:", nrow(sleep_day_clean), "записей\n")
+
+
+hourly_steps_clean <- hourly_steps %>%
+  mutate(ActivityHour = mdy_hms(ActivityHour),
+    Date = as.Date(ActivityHour),
+    Hour = hour(ActivityHour),
+    Weekday = weekdays(Date))
+
+cat("Hourly Steps после очистки:", nrow(hourly_steps_clean), "записей\n")
+
+```
+
+
+## 3.4 Базовая статистика
+
+```{r basic-stats}
+
+summary(daily_activity_clean$TotalSteps)
+summary(daily_activity_clean$Calories)
+summary(sleep_day_clean$HoursAsleep)
+
+
+
+cat("\nСреднее количество шагов:", round(mean(daily_activity_clean$TotalSteps), 0), "\n")
+cat("Медиана количества шагов:", median(daily_activity_clean$TotalSteps), "\n")
+```
+
+---
+
+# 4. Анализ данных (Analyze)
+
+## 4.1 Классификация пользователей по активности
+
+```{r user-classification}
+
+user_activity_raw <- daily_activity_clean %>%
+  group_by(Id) %>%
+  summarise(
+    AvgSteps = mean(TotalSteps),
+    AvgCalories = mean(Calories),
+    DaysTracked = n()
+  )
+
+
+user_activity <- user_activity_raw %>%
+  mutate(
+    UserType = if_else(AvgSteps < 5000, "Малоактивный",
+      if_else(
+        AvgSteps < 7500,
+        "Умеренно активный",
+        if_else(
+          AvgSteps < 10000,
+          "Активный",
+          "Очень активный"
+        )
+      )
+    )
+  )
+
+
+user_distribution <- user_activity %>%
+  group_by(UserType) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+cat("РАСПРЕДЕЛЕНИЕ ПОЛЬЗОВАТЕЛЕЙ ПО АКТИВНОСТИ\n")
+print(user_distribution)
+```
+
+
+## 4.2 Анализ использования устройства
+
+```{r usage-analysis}
+
+device_usage <- daily_activity_clean %>%
+  group_by(Id) %>%
+  summarise(DaysUsed = n()) %>%
+  mutate(
+    UsageLevel = if_else(
+      DaysUsed >= 25,
+      "Высокое (25-31 дней)",
+      if_else(
+        DaysUsed >= 15,
+        "Среднее (15-24 дня)",
+        "Низкое (меньше 15 дней)"
+      )
+    )
+  )
+
+
+usage_summary <- device_usage %>%
+  group_by(UsageLevel) %>%
+  summarise(Users = n()) %>%
+  mutate(Percentage = round(Users / sum(Users) * 100, 1))
+
+cat("ЧАСТОТА ИСПОЛЬЗОВАНИЯ УСТРОЙСТВА\n")
+print(usage_summary)
+```
+
+## 4.3 Связь между активностью и калориями
+
+```{r correlation-analysis}
+
+correlation <- cor(daily_activity_clean$TotalSteps, daily_activity_clean$Calories)
+
+cat("Корреляция между шагами и калориями:", round(correlation, 3), "\n")
+cat("\nИнтерпретация:\n")
+if(correlation > 0.7) {
+  cat("✓ Сильная положительная связь\n")
+} else if(correlation > 0.4) {
+  cat("✓ Умеренная положительная связь\n")
+} else if(correlation < -0.7) {
+  cat("✓ Сильная отрицательная связь\n")
+} else if(correlation < -0.4) {
+  cat("✓ Умеренная отрицательная связь\n")
+} else {
+  cat("✓ Слабая связь\n")
+}
+```
+
+
+---
+
+# 5. Визуализация данных (Share)
+
+## 5.1 Распределение ежедневных шагов
+
+```{r viz-steps-distribution}
+
+ggplot(data = daily_activity_clean, aes(x = TotalSteps)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  geom_vline(xintercept = mean(daily_activity_clean$TotalSteps), 
+             color = "red", linetype = "dashed", linewidth = 1) +
+  
+  
+  geom_vline(xintercept = 10000, 
+             color = "darkgreen", 
+             linetype = "dashed",
+             size = 1) +
+  
+  
+  labs(
+    title = "Распределение ежедневного количества шагов",
+    subtitle = "Красная линия = среднее, зеленая = рекомендация (10,000)",
+    x = "Количество шагов",
+    y = "Частота (количество дней)"
+  ) + theme_minimal()
+
+
+pct_below_10k <- sum(daily_activity_clean$TotalSteps < 10000) / nrow(daily_activity_clean) * 100
+cat("\nВЫВОД:", round(pct_below_10k, 1), "% дней пользователи не достигают 10,000 шагов\n")
+```
+
+
+
+
+## 5.2 Столбчатая диаграмма типов пользователей
+
+```{r viz-user-types}
+
+ggplot(data = user_distribution, aes(x = UserType, y = Percentage)) +
+  
+  geom_col(fill = "coral") +
+  
+  
+  geom_text(aes(label = paste0(Percentage, "%")), vjust = -0.5, size = 4) +
+  
+  labs(
+    title = "Распределение пользователей по уровню активности",
+    subtitle = "На основе среднего количества шагов в день",
+    x = "Тип пользователя",
+    y = "Процент пользователей (%)"
+  ) +
+  
+  theme_minimal() +
+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+## 5.3 Активность по дням недели
+
+```{r viz-weekday-activity}
+
+
+weekday_avg <- daily_activity_clean %>%
+  group_by(Weekday) %>%
+  summarise(AvgSteps = mean(TotalSteps))
+
+
+weekday_avg$Weekday <- factor(
+  weekday_avg$Weekday, 
+  levels = c("Monday", "Tuesday", "Wednesday", "Thursday", 
+             "Friday", "Saturday", "Sunday")
+)
+
+
+ggplot(data = weekday_avg, aes(x = Weekday, y = AvgSteps)) +
+  
+  geom_line(group = 1, color = "darkblue", size = 1.2) +
+  
+  
+  geom_point(color = "darkblue", size = 3) +
+  
+  
+  geom_hline(yintercept = mean(daily_activity_clean$TotalSteps), 
+             linetype = "dashed", 
+             color = "gray50") +
+  
+  labs(
+    title = "Средняя активность по дням недели",
+    subtitle = "Серая пунктирная линия = общее среднее",
+    x = "День недели",
+    y = "Среднее количество шагов"
+  ) +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+## 5.4 Почасовая активность
+
+```{r viz-hourly-pattern}
+
+hourly_avg <- hourly_steps_clean %>%
+  group_by(Hour) %>%
+  summarise(AvgSteps = mean(StepTotal))
+
+ggplot(data = hourly_avg, aes(x = Hour, y = AvgSteps)) +
+  
+  geom_area(fill = "lightblue", alpha = 0.5) +
+  
+  
+  
+  geom_line(color = "darkblue", size = 1) +
+  
+  
+  scale_x_continuous(breaks = seq(0, 23, by = 2)) +
+  
+  
+  labs(
+    title = "Паттерн активности в течение дня",
+    subtitle = "Среднее количество шагов по часам",
+    x = "Час дня (0-23)",
+    y = "Среднее количество шагов"
+  ) +
+  
+  theme_minimal()
+
+
+peak_hour <- hourly_avg$Hour[which.max(hourly_avg$AvgSteps)]
+cat("\nПиковая активность в", peak_hour, "часов\n")
+```
+
+
+
+## 5.5 Связь между шагами и калориями
+
+```{r viz-steps-calories}
+
+ggplot(data = daily_activity_clean, aes(x = TotalSteps, y = Calories)) +
+  
+  geom_point(color = "darkgreen", alpha = 0.5, size = 2) +
+  
+  
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  
+  labs(
+    title = "Взаимосвязь между шагами и калориями",
+    subtitle = paste("Корреляция:", round(correlation, 3)),
+    x = "Количество шагов",
+    y = "Сожженные калории"
+  ) +
+  
+  theme_minimal()
+
+cat("\nВЫВОД: Чем больше шагов, тем больше калорий сжигается\n")
+```
+
+
+
+## 5.6 Распределение сна
+
+```{r viz-sleep-distribution}
+
+ggplot(data = sleep_day_clean, aes(x = HoursAsleep)) +
+  geom_histogram(bins = 20, fill = "purple", alpha = 0.7, color = "white") +
+  
+  
+  geom_vline(xintercept = 7, color = "darkgreen", linetype = "dashed") +
+  geom_vline(xintercept = 9, color = "darkgreen", linetype = "dashed") +
+  
+  labs(
+    title = "Распределение продолжительности сна",
+    subtitle = "Зеленые линии = рекомендованный диапазон (7-9 часов)",
+    x = "Часы сна",
+    y = "Частота"
+  ) +
+  
+  theme_minimal()
+
+
+pct_insufficient_sleep <- sum(sleep_day_clean$HoursAsleep < 7) / nrow(sleep_day_clean) * 100
+cat("\nВЫВОД:", round(pct_insufficient_sleep, 1), "% ночей сон меньше 7 часов\n")
+```
+
+## 5.7 Частота использования устройства
+
+```{r viz-device-usage}
+
+
+ggplot(data = usage_summary, aes(x = UsageLevel, y = Percentage)) +
+  geom_col(fill = "orange") +
+  geom_text(aes(label = paste0(Percentage, "%")), vjust = -0.5, size = 4) +
+  
+  labs(
+    title = "Частота использования устройства",
+    subtitle = "Сколько дней пользователи активно использовали трекер",
+    x = "Уровень использования",
+    y = "Процент пользователей (%)"
+  ) +
+  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+---
+
+# 6. Ключевые выводы и инсайты
+
+## 6.1 Основные находки
+
+```{r key-insights}
+
+avg_steps <- round(mean(daily_activity_clean$TotalSteps), 0)
+avg_calories <- round(mean(daily_activity_clean$Calories), 0)
+avg_sleep <- round(mean(sleep_day_clean$HoursAsleep), 1)
+avg_sedentary_hours <- round(mean(daily_activity_clean$SedentaryMinutes) / 60, 1)
+
+
+pct_below_10k <- round(sum(daily_activity_clean$TotalSteps < 10000) / nrow(daily_activity_clean) * 100, 1)
+pct_insufficient_sleep <- round(sum(sleep_day_clean$HoursAsleep < 7) / nrow(sleep_day_clean) * 100, 1)
+
+
+
+
+cat("АКТИВНОСТЬ:\n")
+cat("   • Среднее количество шагов:", avg_steps, "в день\n")
+cat("   •", pct_below_10k, "% дней НЕ достигают 10,000 шагов\n")
+cat("   • Среднее время сидя:", avg_sedentary_hours, "часов в день\n\n")
+
+cat("СОН:\n")
+cat("   • Средняя продолжительность сна:", avg_sleep, "часов\n")
+cat("   •", pct_insufficient_sleep, "% ночей сон < 7 часов\n\n")
+
+cat("КАЛОРИИ:\n")
+cat("   • Среднее сжигание:", avg_calories, "калорий в день\n")
+cat("   • Корреляция шаги-калории:", round(correlation, 3), "\n\n")
+```
+
+## 6.2 Ключевые инсайты
+
+### Инсайт 1: Недостаточная физическая активность
+
+Данные:
+- Среднее количество шагов: 8,319 (на 17% ниже рекомендованных 10,000)
+- 64.9% дней пользователи не достигают целевого показателя
+- Среднее время в сидячем положении: 15.9 часов в день
+
+Выводы:
+Большинство пользователей ведут преимущественно сидячий образ жизни. При этом половина пользователей (51.5%) демонстрируют активный или очень активный уровень, что указывает на значительную вариативность в поведении.
+
+Рекомендации для Bellabeat:
+- Внедрение напоминаний о необходимости движения при длительном сидении
+- Персонализированные цели, основанные на текущем уровне активности пользователя
+- Фокус на борьбе с сидячим образом жизни через микро-активности
+
+---
+
+### Инсайт 2: Недостаточная продолжительность сна
+
+Данные:
+- Средняя продолжительность сна: 7.0 часов (минимум рекомендованного диапазона 7-9 часов)
+- 44.1% ночей сон составляет менее 7 часов
+- Высокая вариативность: от 0.97 до 13.27 часов
+
+Выводы:
+Почти половина пользователей регулярно недосыпает, что негативно влияет на здоровье, когнитивные функции и общее самочувствие.
+
+Рекомендации для Bellabeat:
+- Функции оптимизации сна с учетом менструального цикла
+- Образовательный контент о важности сна для женского здоровья
+- Умные напоминания о времени подготовки ко сну
+- Интеграция трекинга сна с другими показателями здоровья
+
+---
+
+### Инсайт 3: Предсказуемые паттерны активности
+
+Данные:
+- Пиковая активность наблюдается в 18:00
+- Два основных периода активности: обеденное время (12-14) и вечер (17-19)
+- Минимальная активность: утренние и рабочие часы (9-16)
+
+Выводы:
+Активность пользователей следует предсказуемым паттернам, связанным с рабочим графиком.
+
+Рекомендации для Bellabeat:
+- Таргетированные напоминания в периоды низкой активности
+- Интеграция с календарем для персонализации рекомендаций
+- Адаптация целей под индивидуальный график пользователя
+
+---
+
+### Инсайт 4: Высокая частота использования устройства
+
+Данные:
+- 63.6% пользователей используют устройство на высоком уровне (25-31 день)
+- 33.3% - средний уровень использования (15-24 дня)
+- Только 3% - низкий уровень использования
+
+Выводы:
+Вопреки ожиданиям, вовлеченность пользователей высокая. Проблема заключается не в частоте отслеживания, а в отсутствии перехода от данных к конкретным действиям: 63.6% отслеживают ежедневно, но 64.9% дней не достигают целей.
+
+Рекомендации для Bellabeat:
+- Переход от пассивного трекинга к активному коучингу
+- Персонализированные рекомендации на основе анализа данных
+- Геймификация для поддержания мотивации
+
+---
+
+### Инсайт 5: Умеренная корреляция активности и калорий
+
+Данные:
+- Корреляция между шагами и калориями: 0.562 (умеренная положительная связь)
+
+Выводы:
+Связь между физической активностью и расходом калорий подтверждена, но не является единственным определяющим фактором. На расход калорий также влияют базальный метаболизм, интенсивность активности и другие виды физических нагрузок.
+
+Рекомендации для Bellabeat:
+- Избегать упрощенных обещаний "X шагов = Y калорий"
+- Комплексный подход к отслеживанию здоровья
+- Фокус на общем самочувствии, а не только на калориях
+
+---
+
+# 7. Рекомендации
+
+## 7.1 Стратегические рекомендации
+
+### 1. Позиционирование
+
+Текущий рынок: Конкуренты (FitBit, Apple Watch) фокусируются на отслеживании метрик без персонализированных рекомендаций.
+
+Возможность для Bellabeat: Позиционирование как "персональный коуч здоровья", а не просто трекер активности.
+
+Уникальное преимущество: Специализация на женском здоровье с учетом менструального цикла, беременности и других физиологических особенностей.
+
+---
+
+### 2. Приоритетные функции продукта
+
+A. Модуль оптимизации сна
+- Трекинг качества сна с учетом фаз менструального цикла
+- Персонализированные рекомендации по улучшению сна
+- Напоминания о подготовке ко сну
+
+B. Система напоминаний об активности
+- Детекция длительных периодов сидения
+- Контекстуальные напоминания с учетом календаря
+- Предложения микро-активностей (1-5 минут)
+
+C. Адаптивные цели
+- Персонализированные базовые показатели
+- Постепенное увеличение целей на основе прогресса
+- Гибкие цели с учетом индивидуального графика
+
+D. AI-коуч
+- Анализ персональных паттернов поведения
+- Проактивные рекомендации на основе данных
+- Еженедельные отчеты с инсайтами
+
+---
+
+### 3. Целевые сегменты
+
+Приоритет 1: Работающие женщины 25-45 лет
+- Характеристики: офисная работа, дефицит времени, готовность инвестировать в здоровье
+- Боли: сидячий образ жизни, стресс, недостаток сна
+- Каналы: LinkedIn, корпоративные wellness-программы, Instagram
+
+Приоритет 2: Молодые мамы
+- Характеристики: нерегулярный сон, сложность организации времени
+- Боли: усталость, восстановление после родов
+- Каналы: Facebook-группы, мамские блоги, педиатры
+
+Приоритет 3: Женщины 45+
+- Характеристики: повышенное внимание к здоровью, менопауза
+- Боли: изменения сна, профилактика заболеваний
+- Каналы: Pinterest, медицинские специалисты
+
+---
+
+## 7.2 Метрики успеха (KPI)
+
+### Основные показатели:
+
+Engagement:
+- Baseline (FitBit): 63.6% используют 25+ дней
+- Цель (Bellabeat): 70%
+
+Достижение целей:
+- Baseline (FitBit): 35% дней достигают 10,000 шагов
+- Цель (Bellabeat): 50%
+
+Улучшение сна:
+- Baseline: 7.0 часов
+- Цель: 7.5 часов (через 3 месяца)
+
+Снижение сидячего времени:
+- Baseline: 15.9 часов
+- Цель: 14.0 часов (-12%)
+
+Прогресс активности:
+- Baseline: 8,319 шагов
+- Цель: 9,000 шагов (через 6 месяцев)
+
+---
+
+# 8. Заключение
+
+Анализ данных FitBit выявил ключевые возможности для Bellabeat:
+
+1. Высокая вовлеченность пользователей (63.6% ежедневное использование) при одновременном отсутствии достижения результатов указывает на необходимость перехода от пассивного трекинга к активному коучингу.
+
+2. Критическая проблема сна (44% ночей недостаточный сон) представляет собой главную возможность для дифференциации, особенно с учетом связи сна и менструального цикла.
+
+3. Сидячий образ жизни (15.9 часов в день) требует специализированных решений по стимулированию движения в течение дня.
+
+Конкурентное преимущество Bellabeat: Фокус на женском здоровье с интеграцией данных о менструальном цикле, персонализированным коучингом и комплексным подходом к здоровью, что отличает продукт от универсальных фитнес-трекеров.
+
+Следующие шаги:
+1. Разработка MVP с приоритетными функциями (3 месяца)
+2. Бета-тестирование с фокус-группой (2 месяца)
+3. Запуск маркетинговой кампании с акцентом на сон (1 месяц)
+4. Официальный релиз и масштабирование (6-12 месяцев)
+
+---
+
+Автор: Djamshid Ashrapov  
+Дата: 10.02.2026  
+Контакт: jamshedashrapov9@gmail.com
+
+---
